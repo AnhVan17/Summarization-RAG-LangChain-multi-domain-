@@ -1,0 +1,59 @@
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Env / Secrets
+.venv/
+venv/
+.env
+.env.*
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Build / Dist
+build/
+dist/
+*.egg-info/
+
+# Project-specific (d? li?u & output n?ng)
+data/
+artifacts/
+models/
+eval/*.jsonl
+eval/*.json
+
+# HF / cache
+.cache/
+.hfhome/
+*/.cache/
+*/.hfhome/
+
+# ML artifacts
+mlruns/
+runs/
+logs/
+*.log
+
+# Model / index files
+*.faiss
+*.pkl
+*.pt
+*.bin
+*.safetensors
+
+# OS junk
+.DS_Store
+Thumbs.db 
