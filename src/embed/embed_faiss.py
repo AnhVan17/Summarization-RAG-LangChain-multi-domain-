@@ -1,35 +1,86 @@
-import faiss
-import os
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import List, Dict, Any, Tuple
+from pathlib import Path
+import json
 import pickle
-from sentence_transformers import SentenceTransformer
 import numpy as np
+import faiss
+from sentence_transformers import SentenceTransformer
+import torch
 
 
-def build_index(texts, emb_model="sentence-transformers/all-MiniLM-L6-v2"):
-    model = SentenceTransformer(emb_model)
-    emb = model.encode(texts, normalize_embeddings=True).astype("float32")
-    dim = emb.shape[1]
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass
+class BuildArtifacts:
+    index_path: Path
+    chunks_path: Path
+    meta_path: Path
+
+
+class DenseEncoder:
+    def __init__(self, model_id: str = "intfloat/multilingual-e5-base", device: str | None = None):
+        self.model_id = model_id
+        self.device = device or (
+            "cuda" if torch.cuda.is_available() else "cpu")
+        self.model = SentenceTransformer(self.model_id, device=self.device)
+        self.dim = self.model.get_sentence_embedding_dimension()
+
+    def encode(self, texts: List[str], batch_size: int = 64, normalize: bool = True) -> np.ndarray:
+        emb = self.model.encode(
+            texts,
+            batch_size=batch_size,
+            show_progress_bar=True,
+            convert_to_numpy=True,
+            normalize_embeddings=normalize,
+        )
+        if emb.dtype != np.float32:
+            emb = emb.astype("float32")
+        return emb
+
+
+def build_faiss_index(embeddings: np.ndarray) -> faiss.Index:
+
+    dim = int(embeddings.shape[1])
     index = faiss.IndexFlatIP(dim)
-    index.add(emb)
-    return index, model
+    index.add(embeddings)
+    return index
 
 
-def retrieve(query, index, model, chunks, k=5):
-    query_emb = model.encode(
-        [query], normalize_embeddings=True).astype("float32")
-    D, I = index.search(query_emb, k=3)
-    return [(chunks[i], float(D[0][j])) for j, i in enumerate(I[0])]
+def save_artifacts(
+    artifacts_dir: str | Path,
+    index: "faiss.Index",
+    chunks: List[Dict[str, Any]],
+    meta: Dict[str, Any],
+) -> BuildArtifacts:
+    adir = Path(artifacts_dir)
+    adir.mkdir(parents=True, exist_ok=True)
 
+    index_path = adir / "index.faiss"
+    chunks_path = adir / "chunks.pkl"
+    meta_path = adir / "meta.json"
 
-def save(index, chunks, outdir="."):
-    os.makedirs(outdir, exist_ok=True)
-    faiss.write_index(index, os.path.join(outdir, "index.faiss"))
-    with open(os.path.join(outdir, "chunks.pkl"), "wb") as f:
+    faiss.write_index(index, str(index_path))
+
+    with open(chunks_path, "wb") as f:
         pickle.dump(chunks, f)
 
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
 
-def load(index_path="index.faiss", meta_path="chunks.pkl"):
-    index = faiss.read_index(index_path)
-    with open(meta_path, "rb") as f:
+    return BuildArtifacts(index_path, chunks_path, meta_path)
+
+
+def load_artifacts(artifacts_dir: str | Path) -> Tuple["faiss.Index", List[Dict[str, Any]], Dict[str, Any]]:
+    adir = Path(artifacts_dir)
+    index = faiss.read_index(str(adir / "index.faiss"))
+    with open(adir / "chunks.pkl", "rb") as f:
         chunks = pickle.load(f)
-    return index, chunks
+
+    with open(adir / "meta.json", "r", encoding="utf-8") as f:
+        meta = json.load(f)
+    return index, chunks, meta

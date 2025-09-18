@@ -1,21 +1,83 @@
-from .gen_models import generate_text
+from __future__ import annotations
+from typing import Literal, Dict, Any
+import re
+
+Mode = Literal["tldr", "executive", "qfs"]
 
 
-def summarize_tldr(doc, sentences=5):
-    p = f"Hãy tóm tắt văn bản sau thành khoảng {sentences} câu, mạch lạc, đúng ý gốc:\n\n{doc}\n\nTÓM TẮT:"
-    return generate_text(p)
+def detect_lang_fast(s: str) -> str:
+    # heuristic nhẹ: có dấu tiếng Việt -> 'vi', ngược lại 'en'
+    return "vi" if re.search(r"[àáạảãăắằặẳẵâấầậẩẫđèéẹẻẽêếềệểễìíịỉĩòóọỏõôốồộổỗơớờợởỡùúụủũưứừựửữỳýỵỷỹ]", s.lower()) else "en"
 
 
-def summarize_exec(doc, points=6):
-    p = f"Hãy tóm tắt văn bản sau thành {points} ý chính, xuất dạng bullet '- ':\n\n{doc}\n\nTÓM TẮT:"
-    out = generate_text(p)
-    return out if out.strip().startswith("-") else "- " + out.replace("\n", "\n- ")
+# Prompt templates (ngắn gọn, có guardrail & citation rule)
+PROMPT_VI = {
+    "tldr": """Bạn là trợ lý súc tích.
+CHỈ dùng THÔNG TIN TỪ NGỮ CẢNH dưới đây (có [n]).
+Nếu thiếu thông tin → trả: "Không đủ thông tin".
+
+YÊU CẦU: Tóm tắt TL;DR gọn trong 2–4 câu, tiếng Việt, không bịa, có thể chèn [n] sau câu phù hợp.
+
+NGỮ CẢNH:
+{context}
+
+KẾT QUẢ:
+""",
+    "executive": """Bạn là trợ lý cho lãnh đạo.
+CHỈ dùng THÔNG TIN TỪ NGỮ CẢNH (có [n]); thiếu → "Không đủ thông tin".
+Xuất bullet Executive (4–6 gạch đầu dòng), tiếng Việt, không bịa. Có thể chèn [n].
+
+NGỮ CẢNH:
+{context}
+
+KẾT QUẢ:
+""",
+    "qfs": """Bạn là trợ lý trả lời theo truy vấn.
+CHỈ dùng NGỮ CẢNH (có [n]); thiếu → "Không đủ thông tin".
+Trả lời trực tiếp, ngắn gọn, tiếng Việt; có thể chèn [n] sau mệnh đề có chứng cứ.
+
+CÂU HỎI: {question}
+
+NGỮ CẢNH:
+{context}
+
+KẾT QUẢ:
+""",
+}
+
+PROMPT_EN = {
+    "tldr": """You are a concise assistant.
+Answer ONLY from the CONTEXT below (with [n]); if missing → "Insufficient context".
+Return a TL;DR in 2–4 sentences, in English. You may insert [n] where justified.
+
+CONTEXT:
+{context}
+
+ANSWER:
+""",
+    "executive": """You assist executives.
+Answer ONLY from CONTEXT; if missing → "Insufficient context".
+Return 4–6 executive bullets, in English. You may place [n] after supported claims.
+
+CONTEXT:
+{context}
+
+ANSWER:
+""",
+    "qfs": """Answer only from CONTEXT; if missing → "Insufficient context".
+Give a direct, concise answer in English. You may insert [n] after supported statements.
+
+QUESTION: {question}
+
+CONTEXT:
+{context}
+
+ANSWER:
+""",
+}
 
 
-def map_reduce_summary(chunks, reduce_points=7):
-    partials = [generate_text(
-        f"Tóm tắt đoạn sau thành 2 câu:\n\n{c}\n\nTÓM TẮT:", max_new=140, min_new=50) for c in chunks]
-    corpus = "\n".join(partials)
-    p = (f"Gộp các ý sau thành {reduce_points} ý chính, không trùng lặp, dạng bullet '- ':\n\n"
-         f"{corpus}\n\nTÓM TẮT CUỐI:")
-    return generate_text(p, max_new=300, min_new=120)
+def build_prompt(context_annotated: str, question: str, mode: Mode, out_lang: str) -> str:
+    out_lang = (out_lang or "en").lower()
+    tpl = PROMPT_VI if out_lang == "vi" else PROMPT_EN
+    return tpl[mode].format(context=context_annotated.strip(), question=question.strip())
